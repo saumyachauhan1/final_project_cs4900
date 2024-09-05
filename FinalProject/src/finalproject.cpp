@@ -1,8 +1,8 @@
 #include "finalproject.h"
 
-#include "WorldList.h" //This is where we place all of our WOs
-#include "ManagerOpenGLState.h" //We can change OpenGL State attributes with this
-#include "Axes.h" //We can set Axes to on/off with this
+#include "WorldList.h" 
+#include "ManagerOpenGLState.h" 
+#include "Axes.h"
 #include "PhysicsEngineODE.h"
 
 //Different WO used by this module
@@ -31,7 +31,7 @@
 #include "WONVStaticPlane.h"
 #include "WONVPhysX.h"
 #include "WONVDynSphere.h"
-#include "WOImGui.h" //GUI Demos also need to #include "AftrImGuiIncludes.h"
+#include "WOImGui.h"
 #include "AftrImGuiIncludes.h"
 #include "AftrGLRendererBase.h"
 #include "Mat4.h"
@@ -40,14 +40,8 @@
 #include <WONVPhysX.h>
 #include <irrKlang.h>
 #include <iostream>
-//#include "imgui.h"
-
-#include "NetMsgBlock.h"
-
-#include <iostream>
-#include <cstring>
-#include "winsock2.h"     // Winsock header for Windows
-#include "ws2tcpip.h"     // Additional header for IP address functions
+#include "winsock2.h"
+#include "ws2tcpip.h"
 
 #pragma comment(lib, "Ws2_32.lib")  // Link against Winsock library
 
@@ -56,13 +50,13 @@ using namespace irrklang;
 
 GLViewNewModule* GLViewNewModule::New(const std::vector<std::string>& args)
 {
-    GLViewNewModule* glv = new GLViewNewModule(args);
+    GLViewNewModule* glv = new GLViewNewModule();
     glv->init(Aftr::GRAVITY, Vector(0, 0, -1.0f), "aftr.conf", PHYSICS_ENGINE_TYPE::petODE);
     glv->onCreate();
     return glv;
 }
 
-GLViewNewModule::GLViewNewModule(const std::vector<std::string>& args) : GLView(args)
+GLViewNewModule::GLViewNewModule() : GLView(args), isServer(false) // Default constructor, starts as client
 {
 }
 
@@ -74,6 +68,18 @@ bool GLViewNewModule::hasReachedEndpoint()
 
 void GLViewNewModule::onCreate()
 {
+    // Determine if this instance is the server or client based on args
+    if (!args.empty() && args[0] == "server")
+    {
+        isServer = true;
+        std::cout << "Running as server..." << std::endl;
+    }
+    else
+    {
+        isServer = false;
+        std::cout << "Running as client..." << std::endl;
+    }
+
     if (this->pe != NULL)
     {
         this->pe->setGravityNormalizedVector(Vector(0, 0, -1.0f));
@@ -82,8 +88,14 @@ void GLViewNewModule::onCreate()
     this->setActorChaseType(STANDARDEZNAV);
 
     // Set start and end positions
-    startPos = Vector(-10, 0, 0); // Point A
-    endPos = Vector(10, 0, 0);    // Point B
+    //startPos = Vector(1, 10, 1); // Point A
+    //endPos = Vector(1, -10, 1);    // Point B
+    auto lookDirection = this->getCamera()->getLookDirection().normalizeMe();
+    startPos = (lookDirection * 20) + this->getCamera()->getPosition();
+    endPos = startPos;
+    endPos.y = endPos.y - 20;
+    std::cout << endPos << std::endl;
+    std::cout << startPos << std::endl;
 
     // Create the start and end points
     startPoint = WO::New(ManagerEnvironmentConfiguration::getSMM() + "/models/cube4x4x4redShinyPlastic_pp.wrl", Vector(1, 1, 1), MESH_SHADING_TYPE::mstFLAT);
@@ -103,7 +115,6 @@ void GLViewNewModule::onCreate()
     worldLst->push_back(playerBox);
 }
 
-
 GLViewNewModule::~GLViewNewModule()
 {
 }
@@ -112,51 +123,32 @@ void GLViewNewModule::updateWorld()
 {
     GLView::updateWorld();
 
-    // Check if the player box has reached the endpoint (B)
-    if (hasReachedEndpoint())
+    if (isServer)
     {
-        std::cout << "Congratulations! You have reached Point B!" << std::endl;
-        playerBox->setPosition(startPos); // Reset the box to start position
+        // Server logic: Check if the player box has reached the endpoint (B)
+        if (hasReachedEndpoint())
+        {
+            std::cout << "Congratulations! You have reached Point B!" << std::endl;
+            playerBox->setPosition(startPos); // Reset the box to start position
 
-        // Send the updated position to the second instance
-        sendNetMsgSynchronousTCP("resetPosition", playerBox->getPosition(), playerBox->getDisplayMatrix());
+            // Send the updated position to the client instance
+            sendNetMsgSynchronousTCP("resetPosition", playerBox->getPosition(), playerBox->getDisplayMatrix());
+        }
+
+        // Receive updates from the client instance if available
+        std::string action;
+        Vector position;
+        Mat4 displayMat;
+        receiveNetMsgSynchronousTCP(action, position, displayMat);
+        if (action == "updatePosition" || action == "resetPosition")
+        {
+            playerBox->setPosition(position);
+        }
     }
-
-    // Receive updates from the second instance if available
-    std::string action;
-    Vector position;
-    Mat4 displayMat;
-    receiveNetMsgSynchronousTCP(action, position, displayMat);
-    if (action == "updatePosition" || action == "resetPosition")
-    {
-        playerBox->setPosition(position);
-    }
-}
-
-void GLViewNewModule::onResizeWindow(GLsizei width, GLsizei height)
-{
-    GLView::onResizeWindow(width, height);
-}
-
-void GLViewNewModule::onMouseDown(const SDL_MouseButtonEvent& e)
-{
-    GLView::onMouseDown(e);
-}
-
-void GLViewNewModule::onMouseUp(const SDL_MouseButtonEvent& e)
-{
-    GLView::onMouseUp(e);
-}
-
-void GLViewNewModule::onMouseMove(const SDL_MouseMotionEvent& e)
-{
-    GLView::onMouseMove(e);
 }
 
 void GLViewNewModule::onKeyDown(const SDL_KeyboardEvent& key)
 {
-    GLView::onKeyDown(key);
-
     Vector movementVector;
 
     switch (key.keysym.sym)
@@ -183,11 +175,167 @@ void GLViewNewModule::onKeyDown(const SDL_KeyboardEvent& key)
         return;
     }
 
-    // Move the box
+    // Move the box and send the updated position to the server
     playerBox->moveRelative(movementVector);
-
-    // Send the updated position to the second instance
     sendNetMsgSynchronousTCP("updatePosition", playerBox->getPosition(), playerBox->getDisplayMatrix());
+}
+void GLViewNewModule::sendNetMsgSynchronousTCP(const std::string& action, const Vector& position, const Mat4& displayMat)
+{
+    WSADATA wsaData;
+    SOCKET sock = INVALID_SOCKET;
+    struct sockaddr_in serv_addr;
+
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+    {
+        std::cerr << "WSAStartup failed with error: " << WSAGetLastError() << std::endl;
+        return;
+    }
+
+    sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET)
+    {
+        std::cerr << "Socket creation failed with error: " << WSAGetLastError() << std::endl;
+        WSACleanup();
+        return;
+    }
+
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(12346);  // Match the server port
+
+    inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr);  // Use localhost for testing
+
+    if (connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) == SOCKET_ERROR)
+    {
+        std::cerr << "Connection failed with error: " << WSAGetLastError() << std::endl;
+        closesocket(sock);
+        WSACleanup();
+        return;
+    }
+
+    std::string serializedMsg = action + " " +
+        std::to_string(position.x) + " " + std::to_string(position.y) + " " + std::to_string(position.z) + " ";
+    for (int i = 0; i < 16; i++)
+    {
+        serializedMsg += std::to_string(displayMat[i]) + " ";
+    }
+
+    int result = send(sock, serializedMsg.c_str(), serializedMsg.size(), 0);
+    if (result == SOCKET_ERROR)
+    {
+        std::cerr << "Send failed with error: " << WSAGetLastError() << std::endl;
+    }
+
+    closesocket(sock);
+    WSACleanup();
+}
+
+void GLViewNewModule::receiveNetMsgSynchronousTCP(std::string& action, Vector& position, Mat4& displayMat)
+{
+    WSADATA wsaData;
+    SOCKET listenSocket = INVALID_SOCKET, clientSocket = INVALID_SOCKET;
+    struct sockaddr_in address;
+    int addrlen = sizeof(address);
+    char buffer[1024] = { 0 };
+
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+    {
+        std::cerr << "WSAStartup failed with error: " << WSAGetLastError() << std::endl;
+        return;
+    }
+
+    listenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (listenSocket == INVALID_SOCKET)
+    {
+        std::cerr << "Socket creation failed with error: " << WSAGetLastError() << std::endl;
+        WSACleanup();
+        return;
+    }
+
+    int opt = 1;
+    if (setsockopt(listenSocket, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt)) < 0)
+    {
+        std::cerr << "setsockopt failed with error: " << WSAGetLastError() << std::endl;
+    }
+
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons(12346);  // Match the client port
+
+    if (bind(listenSocket, (struct sockaddr*)&address, sizeof(address)) == SOCKET_ERROR)
+    {
+        std::cerr << "Bind failed with error: " << WSAGetLastError() << std::endl;
+        closesocket(listenSocket);
+        WSACleanup();
+        return;
+    }
+
+    if (listen(listenSocket, 3) == SOCKET_ERROR)
+    {
+        std::cerr << "Listen failed with error: " << WSAGetLastError() << std::endl;
+        closesocket(listenSocket);
+        WSACleanup();
+        return;
+    }
+
+    std::cout << "Waiting for client connection..." << std::endl;
+
+    clientSocket = accept(listenSocket, (struct sockaddr*)&address, &addrlen);
+    if (clientSocket == INVALID_SOCKET)
+    {
+        std::cerr << "Accept failed with error: " << WSAGetLastError() << std::endl;
+        closesocket(listenSocket);
+        WSACleanup();
+        return;
+    }
+
+    int valread = recv(clientSocket, buffer, 1024, 0);
+    if (valread == SOCKET_ERROR)
+    {
+        std::cerr << "Receive failed with error: " << WSAGetLastError() << std::endl;
+        closesocket(clientSocket);
+        closesocket(listenSocket);
+        WSACleanup();
+        return;
+    }
+
+    std::string receivedData(buffer, valread);
+    closesocket(clientSocket);
+    closesocket(listenSocket);
+    WSACleanup();
+
+    std::istringstream iss(receivedData);
+    iss >> action >> position.x >> position.y >> position.z;
+
+    for (int i = 0; i < 16; i++)
+    {
+        iss >> displayMat[i];
+    }
+
+    if (action == "updatePose")
+    {
+        WO* objToUpdate = this->worldLst->at(3);  // Assuming the cube is at index 3
+        objToUpdate->setPosition(position);
+        objToUpdate->setDisplayMatrix(displayMat);
+    }
+}
+void GLViewNewModule::onResizeWindow(GLsizei width, GLsizei height)
+{
+    GLView::onResizeWindow(width, height);
+}
+
+void GLViewNewModule::onMouseDown(const SDL_MouseButtonEvent& e)
+{
+    GLView::onMouseDown(e);
+}
+
+void GLViewNewModule::onMouseUp(const SDL_MouseButtonEvent& e)
+{
+    GLView::onMouseUp(e);
+}
+
+void GLViewNewModule::onMouseMove(const SDL_MouseMotionEvent& e)
+{
+    GLView::onMouseMove(e);
 }
 
 void GLViewNewModule::onKeyUp(const SDL_KeyboardEvent& key)
@@ -245,14 +393,14 @@ void GLViewNewModule::loadMap()
     //    worldLst->push_back(a10);
     //}
 
-    WO* cubewo = WO::New(shinyRedPlasticCube, Vector(1, 1, 1), MESH_SHADING_TYPE::mstFLAT);
-    auto lookDirection = this->getCamera()->getLookDirection().normalizeMe();
+    //WO* cubewo = WO::New(shinyRedPlasticCube, Vector(1, 1, 1), MESH_SHADING_TYPE::mstFLAT);
+    //auto lookDirection = this->getCamera()->getLookDirection().normalizeMe();
 
-    cubewo->setPosition((lookDirection * 20) + this->getCamera()->getPosition());
-    Vector cubewodefaulatpos = cubewo->getPosition();
-    cubewo->renderOrderType = RENDER_ORDER_TYPE::roOPAQUE;
-    cubewo->setLabel("Cube");
-    worldLst->push_back(cubewo);
+    //cubewo->setPosition((lookDirection * 20) + this->getCamera()->getPosition());
+    //Vector cubewodefaulatpos = cubewo->getPosition();
+    //cubewo->renderOrderType = RENDER_ORDER_TYPE::roOPAQUE;
+    //cubewo->setLabel("Cube");
+    //worldLst->push_back(cubewo);
 
     createNewModuleWayPoints();
 }
@@ -279,116 +427,14 @@ void GLViewNewModule::createNewModuleWayPoints()
     worldLst->push_back(wayPt);
 }
 
-void GLViewNewModule::sendNetMsgSynchronousTCP(const std::string& action, const Vector& position, const Mat4& displayMat)
+void GLViewNewModule::setAsServer()
 {
-    WSADATA wsaData;
-    SOCKET sock = INVALID_SOCKET;
-    struct sockaddr_in serv_addr;
-
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
-    {
-        std::cerr << "WSAStartup failed" << std::endl;
-        return;
-    }
-
-    sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sock == INVALID_SOCKET)
-    {
-        std::cerr << "Socket creation failed" << std::endl;
-        WSACleanup();
-        return;
-    }
-
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(12345);
-    inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr);
-
-    if (connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) == SOCKET_ERROR)
-    {
-        std::cerr << "Connection failed" << std::endl;
-        closesocket(sock);
-        WSACleanup();
-        return;
-    }
-
-    std::ostringstream oss;
-    oss << action << " "
-        << position.x << " " << position.y << " " << position.z << " "
-        << displayMat[0] << " " << displayMat[1] << " " << displayMat[2] << " " << displayMat[3] << " "
-        << displayMat[4] << " " << displayMat[5] << " " << displayMat[6] << " " << displayMat[7] << " "
-        << displayMat[8] << " " << displayMat[9] << " " << displayMat[10] << " " << displayMat[11] << " "
-        << displayMat[12] << " " << displayMat[13] << " " << displayMat[14] << " " << displayMat[15];
-
-    std::string serializedMsg = oss.str();
-
-    send(sock, serializedMsg.c_str(), serializedMsg.size(), 0);
-    closesocket(sock);
-    WSACleanup();
+    isServer = true;
+    std::cout << "This instance is set as a server." << std::endl;
 }
 
-void GLViewNewModule::receiveNetMsgSynchronousTCP(std::string& action, Vector& position, Mat4& displayMat)
+void GLViewNewModule::setAsClient()
 {
-    WSADATA wsaData;
-    SOCKET listenSocket = INVALID_SOCKET, clientSocket = INVALID_SOCKET;
-    struct sockaddr_in address;
-    int addrlen = sizeof(address);
-    char buffer[1024] = { 0 };
-
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
-    {
-        std::cerr << "WSAStartup failed" << std::endl;
-        return;
-    }
-
-    listenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (listenSocket == INVALID_SOCKET)
-    {
-        std::cerr << "Socket creation failed" << std::endl;
-        WSACleanup();
-        return;
-    }
-
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(12345);
-
-    if (bind(listenSocket, (struct sockaddr*)&address, sizeof(address)) == SOCKET_ERROR)
-    {
-        std::cerr << "Bind failed" << std::endl;
-        closesocket(listenSocket);
-        WSACleanup();
-        return;
-    }
-
-    if (listen(listenSocket, 3) == SOCKET_ERROR)
-    {
-        std::cerr << "Listen failed" << std::endl;
-        closesocket(listenSocket);
-        WSACleanup();
-        return;
-    }
-
-    clientSocket = accept(listenSocket, (struct sockaddr*)&address, &addrlen);
-    if (clientSocket == INVALID_SOCKET)
-    {
-        std::cerr << "Accept failed" << std::endl;
-        closesocket(listenSocket);
-        WSACleanup();
-        return;
-    }
-
-    int valread = recv(clientSocket, buffer, 1024, 0);
-    std::string receivedData(buffer, valread);
-
-    closesocket(clientSocket);
-    closesocket(listenSocket);
-    WSACleanup();
-
-    std::istringstream iss(receivedData);
-    iss >> action
-        >> position.x >> position.y >> position.z
-        >> displayMat[0] >> displayMat[1] >> displayMat[2] >> displayMat[3]
-        >> displayMat[4] >> displayMat[5] >> displayMat[6] >> displayMat[7]
-        >> displayMat[8] >> displayMat[9] >> displayMat[10] >> displayMat[11]
-        >> displayMat[12] >> displayMat[13] >> displayMat[14] >> displayMat[15];
+    isServer = false;
+    std::cout << "This instance is set as a client." << std::endl;
 }

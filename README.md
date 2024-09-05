@@ -30,4 +30,30 @@ The Multiplayer Box-Movement Game is a simple 3D game where players control a bo
    ```bash
    git clone https://github.com/saumyachauhan1/final_project_cs4900.git
    cd final_project_cs4900/
-2. Run CMAKE GUI.bat  
+2. Run CMAKE GUI.bat 
+
+### Code Instructions
+
+1. One player acts as a server and the other acts as a client. An instance has to act as a server and the other as a client. 
+
+
+```
+int main()
+{
+    GLViewNewModule* module = GLViewNewModule::New();
+
+    // Set the instance as a server or client based on logic
+    module->setAsServer();  // This instance acts as the server
+    // OR
+    module->setAsClient();  // This instance acts as the client
+
+    // Continue with the game loop or logic...
+}
+```
+
+
+
+
+
+
+

@@ -35,9 +35,12 @@ namespace Aftr
         void receiveNetMsgSynchronousTCP(std::string& action, Vector& position, Mat4& displayMat);
 
         bool hasReachedEndpoint();
+        std::vector<std::string> args;  // Store command-line arguments
+        void setAsServer();
+        void setAsClient();
 
     protected:
-        GLViewNewModule(const std::vector<std::string>& args);
+        GLViewNewModule();
         virtual void onCreate();
 
         WO* startPoint;  // Point A
@@ -46,7 +49,7 @@ namespace Aftr
 
         Vector startPos; // Starting position of the player box
         Vector endPos;   // End position (point B)
-
+        bool isServer;
         std::vector<std::string> blocks_loc;
     };
 
